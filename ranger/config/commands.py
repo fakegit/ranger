@@ -89,6 +89,8 @@
 # of ranger.
 # ===================================================================
 
+# pylint: disable=invalid-name,too-many-lines
+
 from __future__ import (absolute_import, division, print_function)
 
 from collections import deque
@@ -140,6 +142,12 @@ class cd(Command):
         if self.arg(1) == '-r':
             self.shift()
             destination = os.path.realpath(self.rest(1))
+            if os.path.isfile(destination):
+                self.fm.select_file(destination)
+                return
+        elif self.arg(1) == '-e':
+            self.shift()
+            destination = os.path.realpath(os.path.expandvars(self.rest(1)))
             if os.path.isfile(destination):
                 self.fm.select_file(destination)
                 return
@@ -485,7 +493,7 @@ class set_(Command):
 class setlocal_(set_):
     """Shared class for setinpath and setinregex
 
-    By implementing the _arg abstract propery you can affect what the name of
+    By implementing the _arg abstract properly you can affect what the name of
     the pattern/path/regex argument can be, this should be a regular expression
     without match groups.
 
@@ -757,7 +765,7 @@ class delete(Command):
         confirm = self.fm.settings.confirm_on_delete
         if confirm != 'never' and (confirm != 'multiple' or many_files):
             self.fm.ui.console.ask(
-                "Confirm deletion of: %s (y/N)" % ', '.join(files),
+                "Confirm deletion of %s items: %s (y/N)" % (len(files), ', '.join(files)),
                 partial(self._question_callback, files),
                 ('n', 'N', 'y', 'Y'),
             )
@@ -816,10 +824,14 @@ class trash(Command):
             file_names = [f.relative_path for f in files]
             many_files = (cwd.marked_items or is_directory_with_files(tfile.path))
 
-        confirm = self.fm.settings.confirm_on_delete
+        confirm = self.fm.settings.confirm_on_trash
+
+        if confirm == 'like_delete':
+            confirm = self.fm.settings.confirm_on_delete
+
         if confirm != 'never' and (confirm != 'multiple' or many_files):
             self.fm.ui.console.ask(
-                "Confirm deletion of: %s (y/N)" % ', '.join(file_names),
+                "Confirm deletion of %s items: %s (y/N)" % (len(files), ', '.join(file_names)),
                 partial(self._question_callback, files),
                 ('n', 'N', 'y', 'Y'),
             )
@@ -1216,7 +1228,7 @@ class chmod(Command):
 
 
 class bulkrename(Command):
-    """:bulkrename
+    """:bulkrename [-FLAGS...]
 
     This command opens a list of selected files in an external editor.
     After you edit and save the file, it will generate a shell script
@@ -1733,13 +1745,22 @@ class narrow(Command):
 
     Show only the files selected right now. If no files are selected,
     disable narrowing.
+
+    To disable narrow mode when selection is still active, use the
+    :unnarrow command.
     """
+
     def execute(self):
-        if self.fm.thisdir.marked_items:
+        # Calling :narrow enables narrow mode unless it is called with a
+        # case-insensitive `false` argument
+        narrow_mode = self.arg(1).lower() != "false"
+
+        if narrow_mode and self.fm.thisdir.marked_items:
             selection = [f.basename for f in self.fm.thistab.get_selection()]
             self.fm.thisdir.narrow_filter = selection
         else:
             self.fm.thisdir.narrow_filter = None
+
         self.fm.thisdir.refilter()
 
 
@@ -1815,6 +1836,22 @@ class filter_stack(Command):
             )
             return
 
+        # Cleanup.
+        self.cancel()
+
+    def quick(self):
+        if self.rest(1).startswith("add name "):
+            try:
+                regex = re.compile(self.rest(3))
+            except re.error:
+                regex = re.compile("")
+            self.fm.thisdir.temporary_filter = regex
+            self.fm.thisdir.refilter()
+
+        return False
+
+    def cancel(self):
+        self.fm.thisdir.temporary_filter = None
         self.fm.thisdir.refilter()
 
 
